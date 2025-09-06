@@ -6,6 +6,7 @@ import org.springframework.data.annotation.Id
 import org.springframework.data.annotation.LastModifiedDate
 import org.springframework.data.mongodb.core.mapping.Document
 import org.springframework.data.mongodb.core.mapping.Field
+import org.springframework.data.mongodb.core.mapping.FieldType
 import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
@@ -15,7 +16,7 @@ data class Expense(
     @Id val id: ObjectId = ObjectId(),
     @Field("group_id") var groupId: ObjectId? = null,
     @Field("created_by_user_id")val createdByUserId: ObjectId,
-    @Field("total_expense") var totalExpense: BigDecimal,
+    @Field("total_expense", targetType = FieldType.DECIMAL128)  var totalExpense: BigDecimal,
     @Field("description") var description: String?,
     @Field("split") var splitType: String,
     @Field("Splits") var splits: List<Split>,
@@ -31,6 +32,6 @@ data class Expense(
 data class Split(
     @Id val id: ObjectId = ObjectId(),
     @Field("owed_by_which_user") val owedByUserId: ObjectId,
-    @Field("owed_amount") val owedAmount: BigDecimal,
+    @Field("owed_amount", targetType = FieldType.DECIMAL128) val owedAmount: BigDecimal,
     @Field("owed_to_user_id") val owedToUserId: ObjectId,
 )

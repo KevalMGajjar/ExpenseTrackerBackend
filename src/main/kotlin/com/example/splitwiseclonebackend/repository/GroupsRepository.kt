@@ -18,4 +18,6 @@ interface GroupsRepository : MongoRepository<Group, ObjectId> {
     @Query("{ '_id': ?0, 'members.user_id': ?1 }")
     fun findGroupByGroupIdAndUserId(groupId: ObjectId, userId: ObjectId): Group?
 
+    fun findAllByMembers_UserId(userId: ObjectId): List<Group>
+
 }

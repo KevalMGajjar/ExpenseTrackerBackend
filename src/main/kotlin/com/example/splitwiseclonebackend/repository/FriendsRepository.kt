@@ -8,8 +8,10 @@ interface FriendsRepository : MongoRepository<Friend, ObjectId> {
 
     fun findAllByCurrentUserId(userId: ObjectId): List<Friend>
 
-    fun findByFriendIdAndCurrentUserId(friendId: ObjectId, currentUserId: ObjectId): Friend
+    fun findByFriendIdAndCurrentUserId(friendId: ObjectId, currentUserId: ObjectId): Friend?
 
     fun existsByFriendIdAndCurrentUserId(friendId: ObjectId, currentUserId: ObjectId): Boolean
+
+    fun deleteAllByCurrentUserIdOrFriendId(currentUserId: ObjectId, friendId: ObjectId)
 
 }

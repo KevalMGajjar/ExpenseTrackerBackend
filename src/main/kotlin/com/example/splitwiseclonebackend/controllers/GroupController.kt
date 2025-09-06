@@ -4,20 +4,28 @@ import com.example.splitwiseclonebackend.models.Group
 import com.example.splitwiseclonebackend.models.Member
 import com.example.splitwiseclonebackend.repository.GroupsRepository
 import com.example.splitwiseclonebackend.repository.UserRepository
+import com.example.splitwiseclonebackend.repository.ExpenseRepository
+import com.example.splitwiseclonebackend.services.DebtSimplificationService
+import com.example.splitwiseclonebackend.services.Transaction
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import jakarta.validation.Valid
 import org.bson.types.ObjectId
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.server.ResponseStatusException
 import java.time.Instant
 
 @RestController
 @RequestMapping("/group")
-class GroupController(private val groupsRepository: GroupsRepository, private val userRepository: UserRepository) {
+class GroupController(private val groupsRepository: GroupsRepository, private val userRepository: UserRepository, private val expenseRepository: ExpenseRepository, // Add this
+                      private val debtSimplificationService: DebtSimplificationService ) {
 
     data class GroupRequest(
         val groupName: String,
@@ -73,6 +81,14 @@ class GroupController(private val groupsRepository: GroupsRepository, private va
         val membersIds: List<String>
     )
 
+    data class SimplifiedDebtResponse(
+        val fromUser: String,
+        val toUser: String,
+        val amount: Double,
+        val fromUsername: String,
+        val toUsername: String
+    )
+
     @PostMapping("/add")
     fun save(@Valid @RequestBody groupRequest: GroupRequest): GroupAddResponse {
 
@@ -108,17 +124,53 @@ class GroupController(private val groupsRepository: GroupsRepository, private va
         }
     }
 
-    @DeleteMapping("/delete")
-    fun delete(@Valid @RequestBody deleteRequest: DeleteGroupRequest) {
+    @DeleteMapping("/deleteMembers/{groupId}")
+    fun deleteMembers(
+        @PathVariable groupId: String,
+        @RequestParam memberIds: List<String> // Spring Boot automatically maps multiple params like ?memberIds=...&memberIds=...
+    ): ResponseEntity<Unit> {
+        val group = groupsRepository.findGroupByGroupId(ObjectId(groupId))
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Group not found")
 
-        val group = groupsRepository.findGroupByGroupId(ObjectId(deleteRequest.groupId))
+        val membersToRemove = memberIds.map { ObjectId(it) }.toSet()
 
-        if (group?.groupCreatedByUserId == ObjectId(deleteRequest.currentUserId)) {
-            groupsRepository.deleteGroupByGroupId(ObjectId(deleteRequest.currentUserId))
-        } else {
-            throw ResponseStatusException(HttpStatus.CONFLICT, "User is not group admin")
+        // This is a much more efficient way to remove members
+        val updatedMembers = group.members?.filter { member ->
+            member.userId !in membersToRemove
         }
 
+        group.members = updatedMembers
+        group.updatedAt = Instant.now()
+        groupsRepository.save(group)
+
+        // Return a successful response
+        return ResponseEntity.ok().build()
+    }
+
+    /**
+     * Deletes an entire group. This can only be done by the group's admin.
+     * This is a DELETE operation, so it takes data from the URL path and query parameters.
+     */
+    @DeleteMapping("/delete/{groupId}")
+    fun deleteGroup(
+        @PathVariable groupId: String,
+        @RequestParam currentUserId: String
+    ): ResponseEntity<Unit> {
+        val group = groupsRepository.findGroupByGroupId(ObjectId(groupId))
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Group not found")
+
+        // Check if the user making the request is the admin of the group
+        if (group.groupCreatedByUserId == ObjectId(currentUserId)) {
+            // FIX: The original code had a bug where it tried to delete by the user's ID.
+            // This now correctly deletes the group by its own ID.
+            groupsRepository.deleteById(group.groupId)
+            // TODO: You might need to call a service here to reverse all expense balances related to this group.
+            // e.g., balanceService.reverseAllSplitsForGroup(group.id)
+            return ResponseEntity.ok().build()
+        } else {
+            // If the user is not the admin, they are not allowed to delete the group.
+            throw ResponseStatusException(HttpStatus.FORBIDDEN, "User is not the group admin and cannot delete it.")
+        }
     }
 
     @PostMapping("/update")
@@ -163,36 +215,6 @@ class GroupController(private val groupsRepository: GroupsRepository, private va
         groupsRepository.save(group)
     }
 
-    @PostMapping("/deleteMembers")
-    fun deleteMembers(@Valid @RequestBody deleteGroupMembers: DeleteGroupMembers) {
-
-        val group = groupsRepository.findGroupByGroupId(ObjectId(deleteGroupMembers.groupId))
-            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Group not found")
-
-        val existingMembersIds = group.members?.map { it.userId }?.toSet() ?: emptySet()
-        val membersToDelete = deleteGroupMembers.membersIds.map { memberId ->
-            println("$memberId ${deleteGroupMembers.groupId} deleted")
-            val group = groupsRepository.findGroupByGroupIdAndUserId(ObjectId(deleteGroupMembers.groupId), ObjectId(memberId))
-            group?.members?.find { it.userId == ObjectId(memberId) }
-        }
-
-        membersToDelete.forEach { member ->
-            if (member?.userId !in existingMembersIds) {
-                throw ResponseStatusException(HttpStatus.NOT_FOUND, "Member not found")
-            }
-        }
-
-        if (membersToDelete.isNotEmpty()) {
-            val updatedMembersList = group.members?.toMutableList() ?: mutableListOf()
-            updatedMembersList.removeAll(membersToDelete)
-            group.members = updatedMembersList
-            group.updatedAt = Instant.now()
-
-            groupsRepository.save(group)
-        }
-
-    }
-
     @PostMapping("/getAll")
     fun getAllGroups(@Valid @RequestBody getAllGroupsRequest: GetAllGroupsRequest): List<GetAllGroupsResponse> {
         val groupList = groupsRepository.findAllByMemberUserId(ObjectId(getAllGroupsRequest.userId))
@@ -213,6 +235,30 @@ class GroupController(private val groupsRepository: GroupsRepository, private va
                     )
                 },
                 groupId = it.groupId.toHexString()
+            )
+        }
+    }
+
+    @GetMapping("/{groupId}/simplify")
+    fun getSimplifiedDebts(@PathVariable groupId: String): List<SimplifiedDebtResponse> {
+        val groupObjectId = ObjectId(groupId)
+        val groupExpenses = expenseRepository.findAll().filter { it.groupId == groupObjectId }
+
+        if (groupExpenses.isEmpty()) {
+            return emptyList()
+        }
+
+        val simplifiedTransactions = debtSimplificationService.simplifyDebts(groupExpenses)
+
+        return simplifiedTransactions.map { transaction ->
+            val fromUser = userRepository.findUserByUserId(transaction.from)
+            val toUser = userRepository.findUserByUserId(transaction.to)
+            SimplifiedDebtResponse(
+                fromUser = transaction.from.toHexString(),
+                toUser = transaction.to.toHexString(),
+                amount = transaction.amount.toDouble(),
+                fromUsername = fromUser?.username ?: "Unknown",
+                toUsername = toUser?.username ?: "Unknown"
             )
         }
     }

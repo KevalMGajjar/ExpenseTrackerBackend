@@ -1,7 +1,6 @@
 package com.example.splitwiseclonebackend.controllers
 
 import com.example.splitwiseclonebackend.models.Friend
-import com.example.splitwiseclonebackend.models.Split
 import com.example.splitwiseclonebackend.repository.FriendsRepository
 import com.example.splitwiseclonebackend.repository.UserRepository
 import com.example.splitwiseclonebackend.services.BalanceService
@@ -9,11 +8,8 @@ import com.example.splitwiseclonebackend.services.SplitDto
 import jakarta.validation.Valid
 import org.bson.types.ObjectId
 import org.springframework.http.HttpStatus
-import org.springframework.web.bind.annotation.DeleteMapping
-import org.springframework.web.bind.annotation.PostMapping
-import org.springframework.web.bind.annotation.RequestBody
-import org.springframework.web.bind.annotation.RequestMapping
-import org.springframework.web.bind.annotation.RestController
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.*
 import org.springframework.web.server.ResponseStatusException
 
 @RestController
@@ -23,6 +19,8 @@ class FriendsController(
     private val userRepository: UserRepository,
     private val balanceService: BalanceService
 ) {
+
+    // --- Data Classes for API requests/responses ---
 
     data class GetAllFriendsRequest(val currentUserId: String)
 
@@ -37,10 +35,14 @@ class FriendsController(
         val friendId: String
     )
 
-    data class DeleteFriendRequest(val currentUserId: String, val friendId: String)
-
     data class UpdateFriendBalanceRequest(
         val splits: List<SplitDto>
+    )
+
+    data class SettleUpRequest(
+        val payerId: String,
+        val receiverId: String,
+        val amount: Double
     )
 
     data class AddFriendsRequest(
@@ -53,82 +55,74 @@ class FriendsController(
     )
 
     data class AddFriendResponse(
-        val friends: List<GetAllFriendResponse>
+        val friends: List<GetAllFriendResponse>,
+        val notFoundPhoneNumbers: List<String>
     )
 
-    data class UpdateFriendResponse(
-        val id: String,
-        val friendId: String,
-        val profilePic: String,
-        val username: String,
-        val phoneNumber: String?,
-        val currentUserId: String,
-        val email: String?,
-        val balanceWithUser: Double?
-    )
+    // --- Controller Endpoints ---
 
-        @PostMapping("/getAll")
+    @PostMapping("/getAll")
     fun getAllFriends(@Valid @RequestBody getAllFriendsRequest: GetAllFriendsRequest): List<GetAllFriendResponse> {
-
-            val allFriends = friendsRepository.findAllByCurrentUserId(ObjectId(getAllFriendsRequest.currentUserId))
-            return allFriends.map {
-                GetAllFriendResponse(
-                    id = it.id.toHexString(),
-                    profilePic = it.profilePic,
-                    username = it.username,
-                    phoneNumber = it.phoneNumber,
-                    email = it.email,
-                    balanceWithUser = it.balanceWithUser,
-                    currentUserId = getAllFriendsRequest.currentUserId,
-                    friendId = it.friendId.toHexString()
-                )
-            }
+        val allFriends = friendsRepository.findAllByCurrentUserId(ObjectId(getAllFriendsRequest.currentUserId))
+        return allFriends.map {
+            GetAllFriendResponse(
+                id = it.id.toHexString(),
+                profilePic = it.profilePic,
+                username = it.username,
+                phoneNumber = it.phoneNumber,
+                email = it.email,
+                balanceWithUser = it.balanceWithUser!!.toDouble(),
+                currentUserId = getAllFriendsRequest.currentUserId,
+                friendId = it.friendId.toHexString()
+            )
+        }
     }
 
     @DeleteMapping("/delete")
-    fun deleteFriend(@Valid @RequestBody deleteFriendRequest: DeleteFriendRequest) {
+    fun deleteFriend(
+        // Use query parameters for DELETE, not a request body
+        @RequestParam currentUserId: String,
+        @RequestParam friendId: String
+    ): ResponseEntity<Unit> {
+        // This query now correctly returns a nullable Friend?
+        val friendToDeleteForCurrentUser = friendsRepository.findByFriendIdAndCurrentUserId(ObjectId(friendId), ObjectId(currentUserId))
+        val friendToDeleteForFriend = friendsRepository.findByFriendIdAndCurrentUserId(ObjectId(currentUserId), ObjectId(friendId))
 
-        val friendToDeleteForCurrentUser = friendsRepository.findByFriendIdAndCurrentUserId(ObjectId(deleteFriendRequest.friendId), ObjectId(deleteFriendRequest.currentUserId))
-        val friendToDeleteForFriend = friendsRepository.findByFriendIdAndCurrentUserId(ObjectId(deleteFriendRequest.currentUserId), ObjectId(deleteFriendRequest.friendId))
+        // FIX: Use safe calls (`?.let`) to only delete if the objects are not null.
+        // This prevents the NullPointerException and makes the logic robust.
+        friendToDeleteForCurrentUser?.let { friendsRepository.delete(it) }
+        friendToDeleteForFriend?.let { friendsRepository.delete(it) }
 
-        friendsRepository.delete(friendToDeleteForCurrentUser)
-        friendsRepository.delete(friendToDeleteForFriend)
+        return ResponseEntity.ok().build()
     }
 
     @PostMapping("/updateBalance")
-    fun updateBalanceWithFriend(@Valid @RequestBody updateFriendRequest: UpdateFriendBalanceRequest){
-
+    fun updateBalanceWithFriend(@Valid @RequestBody updateFriendRequest: UpdateFriendBalanceRequest) {
         balanceService.processSplits(splits = updateFriendRequest.splits)
-
     }
 
     @PostMapping("/add")
     fun addFriends(@Valid @RequestBody addFriendsRequest: AddFriendsRequest): AddFriendResponse {
-
         val currentUserId = ObjectId(addFriendsRequest.currentUserId)
-
         val potentialFriendUsers = userRepository.findByPhoneNumberIn(addFriendsRequest.phoneNumberList)
+        val foundNumbers = potentialFriendUsers.mapNotNull { it.phoneNumber }.toSet()
+
+        val phoneNumbersNotFound = addFriendsRequest.phoneNumberList.filter { it !in foundNumbers }
 
         val usersToAdd = potentialFriendUsers.filter { potentialFriend ->
-
-            val isNotCurrentUser = potentialFriend.userId != ObjectId(addFriendsRequest.currentUserId)
-
+            val isNotCurrentUser = potentialFriend.userId != currentUserId
             val isNotAlreadyFriend = !friendsRepository.existsByFriendIdAndCurrentUserId(
                 currentUserId = currentUserId,
                 friendId = potentialFriend.userId
             )
-
             isNotCurrentUser && isNotAlreadyFriend
         }
 
         val savedFriends: List<Friend>
-
         if (usersToAdd.isNotEmpty()) {
-
             val friendLinksToCreate = usersToAdd.flatMap { friendUser ->
-
                 val linkForCurrentUser = Friend(
-                    currentUserId = ObjectId(addFriendsRequest.currentUserId),
+                    currentUserId = currentUserId,
                     username = friendUser.username,
                     email = friendUser.email,
                     phoneNumber = friendUser.phoneNumber,
@@ -145,29 +139,16 @@ class FriendsController(
                 )
                 listOf(linkForCurrentUser, linkForNewFriend)
             }
-
             savedFriends = friendsRepository.saveAll(friendLinksToCreate)
         } else {
             savedFriends = emptyList()
         }
 
+        if (potentialFriendUsers.isNotEmpty() && usersToAdd.isEmpty() && phoneNumbersNotFound.isEmpty()) {
+            throw ResponseStatusException(HttpStatus.CONFLICT, "Users are already in your friends list.")
+        }
+
         val friendsAddedForCurrentUser = savedFriends.filter { it.currentUserId == currentUserId }
-
-        val foundNumbers = potentialFriendUsers.mapNotNull { it.phoneNumber }.toSet()
-        val phoneNumbersNotFound = addFriendsRequest.phoneNumberList.filter { it !in foundNumbers }
-
-        if (phoneNumbersNotFound.isNotEmpty()) {
-            // TODO: Send invitations to these numbers
-            println("Numbers not found on platform: $phoneNumbersNotFound")
-        }
-
-        if (potentialFriendUsers.isNotEmpty() && usersToAdd.isEmpty()) {
-            throw ResponseStatusException(HttpStatus.CONFLICT, "Users are already in your friends list or you tried to add yourself. $usersToAdd")
-        }
-
-        if (potentialFriendUsers.isEmpty()) {
-            throw ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY, "No users found with the provided phone numbers.")
-        }
 
         return AddFriendResponse(
             friends = friendsAddedForCurrentUser.map { friend ->
@@ -177,12 +158,24 @@ class FriendsController(
                     username = friend.username,
                     phoneNumber = friend.phoneNumber,
                     email = friend.email,
-                    balanceWithUser = friend.balanceWithUser,
+                    balanceWithUser = friend.balanceWithUser!!.toDouble(),
                     currentUserId = addFriendsRequest.currentUserId,
                     friendId = friend.friendId.toHexString()
                 )
-            }
+            },
+            notFoundPhoneNumbers = phoneNumbersNotFound
         )
     }
 
+    @PostMapping("/settle")
+    fun settleUp(@Valid @RequestBody request: SettleUpRequest): ResponseEntity<Unit> {
+        // This endpoint now receives the specific payer and receiver from the app
+        // and calls the service to perform the balance update.
+        balanceService.settleUp(
+            payerId = ObjectId(request.payerId),
+            receiverId = ObjectId(request.receiverId),
+            amount = request.amount
+        )
+        return ResponseEntity.ok().build()
+    }
 }

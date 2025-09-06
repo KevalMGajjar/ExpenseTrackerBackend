@@ -7,6 +7,7 @@ import com.example.splitwiseclonebackend.repository.FriendsRepository
 import com.example.splitwiseclonebackend.services.BalanceService
 import jakarta.validation.Valid
 import org.bson.types.ObjectId
+import org.jetbrains.annotations.NotNull
 import org.springframework.http.HttpStatus
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -40,7 +41,8 @@ class ExpenseController(
         val currencyCode: String,
         val paidByUserIds: List<String>,
         val participants: List<String>,
-        val expenseDate: String
+        @field: NotNull
+        val expenseDate: LocalDate
     )
 
     data class UpdateExpenseRequest(
@@ -76,7 +78,7 @@ class ExpenseController(
         val currencyCode: String,
         val paidByUserIds: List<String>,
         val participants: List<String>,
-        val groupId: String? = null,
+        val groupId: String?,
         val expenseDate: String,
         val splitType: String,
         val createdByUserId: String,
@@ -89,7 +91,6 @@ class ExpenseController(
 
     @PostMapping("/add")
     fun saveExpense(@Valid @RequestBody addExpenseRequest: AddExpenseRequest): ExpenseResponse {
-        val formatter = DateTimeFormatter.ofPattern("MM/dd/yyyy")
         val newExpense = Expense(
             groupId = if (!addExpenseRequest.groupId.isNullOrBlank()) {
                 ObjectId(addExpenseRequest.groupId)
@@ -113,7 +114,7 @@ class ExpenseController(
                     owedToUserId = ObjectId(it.owedToUserId)
                 )
             },
-            expenseDate = LocalDate.parse(addExpenseRequest.expenseDate, formatter)
+            expenseDate = addExpenseRequest.expenseDate
         )
         expenseRepository.save(
             newExpense
@@ -141,7 +142,8 @@ class ExpenseController(
                 user.toHexString()
             },
             deleted = newExpense.isDeleted,
-            createdByUserId = newExpense.createdByUserId.toHexString()
+            createdByUserId = newExpense.createdByUserId.toHexString(),
+            groupId = newExpense.groupId?.toHexString()
         )
     }
     @DeleteMapping("/delete/{id}")
@@ -203,7 +205,8 @@ class ExpenseController(
                     user.toHexString()
                 },
                 createdByUserId = expenseToUpdate.createdByUserId.toHexString(),
-                deleted = expenseToUpdate.isDeleted
+                deleted = expenseToUpdate.isDeleted,
+                groupId = expenseToUpdate.groupId?.toHexString(),
             )
         }
         else {
@@ -240,7 +243,8 @@ class ExpenseController(
                         participant.toHexString()
                     },
                     deleted = expense.isDeleted,
-                    createdByUserId = expense.createdByUserId.toHexString()
+                    createdByUserId = expense.createdByUserId.toHexString(),
+                    groupId = expense.groupId?.toHexString()
                 )
             }
         }else{

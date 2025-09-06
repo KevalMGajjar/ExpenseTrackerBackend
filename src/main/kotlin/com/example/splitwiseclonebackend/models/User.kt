@@ -1,5 +1,7 @@
 package com.example.splitwiseclonebackend.models
 
+import com.example.splitwiseclonebackend.utils.ObjectIdSerializer
+import com.fasterxml.jackson.databind.annotation.JsonSerialize
 import org.bson.types.ObjectId
 import org.springframework.data.annotation.CreatedDate
 import org.springframework.data.annotation.Id
@@ -12,7 +14,7 @@ import java.time.Instant
 
 @Document(collection = "Users")
 data class User(
-    @Id val userId: ObjectId = ObjectId(),
+    @Id @JsonSerialize(using = ObjectIdSerializer::class) val userId: ObjectId = ObjectId(),
     @Field("email")@Indexed(unique = true) val email: String,
     @Field("username")@Indexed(unique = true) var username: String,
     @Field("hashed_password") var hashedPassword: String,

@@ -12,4 +12,6 @@ interface ExpenseRepository : MongoRepository<Expense, ObjectId> {
 
     @Query("{'participants':  ?0}")
     fun findExpensesByUserId(userId: ObjectId): List<Expense>
+
+    fun deleteAllByCreatedByUserId(createdByUserId: ObjectId)
 }

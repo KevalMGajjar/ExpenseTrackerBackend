@@ -5,6 +5,7 @@ import com.example.splitwiseclonebackend.models.RefreshToken
 import com.example.splitwiseclonebackend.models.User
 import com.example.splitwiseclonebackend.repository.RefreshTokenRepository
 import com.example.splitwiseclonebackend.repository.UserRepository
+import com.example.splitwiseclonebackend.services.UserAlreadyExistsException
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken
 import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier
 import com.google.api.client.http.javanet.NetHttpTransport
@@ -52,19 +53,31 @@ class AuthService(
     )
 
     fun register(email: String, password: String, username: String, phoneNumber: String): User {
-        val user = userRepository.findUserByEmail(email.trim())
-        if (user != null) {
-            throw ResponseStatusException(HttpStatus.valueOf(409), "User already exists")
+        // 1. Check if a user with the given email already exists
+        if (userRepository.existsByEmail(email.trim())) {
+            // FIX: Throw a custom exception that the controller can catch and handle gracefully.
+            throw UserAlreadyExistsException("A user with this email already exists.")
         }
-        return userRepository.save(
-            User(
-                email = email.trim(),
-                hashedPassword = hashEncoder.encode(password),
-                createdDate = Instant.now(),
-                username = username,
-                phoneNumber = phoneNumber
-            )
+
+        // 2. Add a check for the username to prevent duplicates
+        if (userRepository.existsByUsername(username.trim())) {
+            throw UserAlreadyExistsException("This username is already taken.")
+        }
+
+        // 3. If all checks pass, create the new user object
+        val newUser = User(
+            email = email.trim(),
+            // CRITICAL: Always ensure the password is being hashed.
+            hashedPassword = hashEncoder.encode(password),
+            createdDate = Instant.now(),
+            username = username.trim(),
+            phoneNumber = phoneNumber
+            // Set any other default fields here
         )
+
+        // 4. Save the new user and return the saved entity to the controller.
+        // The controller will then send this back to the app in the response body.
+        return userRepository.save(newUser)
     }
 
     fun login(email: String, password: String): LoginResponse {

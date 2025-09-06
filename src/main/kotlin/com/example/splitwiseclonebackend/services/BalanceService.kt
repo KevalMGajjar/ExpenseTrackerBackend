@@ -2,62 +2,78 @@ package com.example.splitwiseclonebackend.services
 
 import com.example.splitwiseclonebackend.models.Split
 import com.example.splitwiseclonebackend.repository.FriendsRepository
-import org.apache.commons.logging.Log
 import org.bson.types.ObjectId
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-
+import org.springframework.web.server.ResponseStatusException
+import java.math.BigDecimal
 
 @Service
+@Transactional
 class BalanceService(private val friendsRepository: FriendsRepository) {
 
-    @Transactional
     fun processSplits(splits: List<SplitDto>) {
         splits.forEach { split ->
-            println("Split: $split")
-            val friendRecord1 = friendsRepository.findByFriendIdAndCurrentUserId(ObjectId(split.owedToUserId), ObjectId(split.owedByUserId))
-            friendRecord1.let {
-                it.balanceWithUser = it.balanceWithUser?.minus(split.owedAmount)
-                println("Balance: ${it.balanceWithUser}")
-                friendsRepository.save(it)
+            // FIX: Convert the incoming Double to BigDecimal immediately for safe calculations.
+            val amount = BigDecimal.valueOf(split.owedAmount)
+
+            // 1. Update the debtor's record.
+            // From the debtor's perspective, they owe more, so their balance decreases (becomes more negative).
+            friendsRepository.findByFriendIdAndCurrentUserId(ObjectId(split.owedToUserId), ObjectId(split.owedByUserId))?.let { debtorFriendRecord ->
+                // Use .subtract() for BigDecimal math.
+                debtorFriendRecord.balanceWithUser = (debtorFriendRecord.balanceWithUser ?: BigDecimal.ZERO).subtract(amount)
+                friendsRepository.save(debtorFriendRecord)
             }
 
-            val friendRecord2 = friendsRepository.findByFriendIdAndCurrentUserId(ObjectId(split.owedByUserId), ObjectId(split.owedToUserId))
-            friendRecord2.let {
-                it.balanceWithUser = it.balanceWithUser?.plus(split.owedAmount)
-                friendsRepository.save(it)
+            // 2. Update the creditor's record.
+            // From the creditor's perspective, they are owed more, so their balance increases (becomes more positive).
+            friendsRepository.findByFriendIdAndCurrentUserId(ObjectId(split.owedByUserId), ObjectId(split.owedToUserId))?.let { creditorFriendRecord ->
+                // Use .add() for BigDecimal math.
+                creditorFriendRecord.balanceWithUser = (creditorFriendRecord.balanceWithUser ?: BigDecimal.ZERO).add(amount)
+                friendsRepository.save(creditorFriendRecord)
             }
         }
     }
 
-    @Transactional
     fun reverseSplits(splits: List<Split>) {
         splits.forEach { split ->
-            // In the original split, 'owedByUserId' owed 'owedToUserId'.
-            // To reverse this, we do the opposite math.
+            // The owedAmount in the Split entity is already a BigDecimal, so no conversion is needed.
+            val amount = split.owedAmount
 
-            // Find the record for the person who WAS OWED money.
-            // Their balance with the other person should DECREASE.
-            val personOwedRecord = friendsRepository.findByFriendIdAndCurrentUserId(
-                split.owedByUserId,
-                split.owedToUserId
-            )
-            personOwedRecord.let {
-                it.balanceWithUser = it.balanceWithUser?.minus(split.owedAmount.toDouble())
-                friendsRepository.save(it)
+            // 1. Update the original creditor's record (DECREASE their balance).
+            friendsRepository.findByFriendIdAndCurrentUserId(split.owedByUserId, split.owedToUserId)?.let { creditorFriendRecord ->
+                creditorFriendRecord.balanceWithUser = (creditorFriendRecord.balanceWithUser ?: BigDecimal.ZERO).subtract(amount)
+                friendsRepository.save(creditorFriendRecord)
             }
 
-            // Find the record for the person who OWED money.
-            // Their balance with the other person should INCREASE (back towards zero).
-            val personWhoOwesRecord = friendsRepository.findByFriendIdAndCurrentUserId(
-                split.owedToUserId,
-                split.owedByUserId
-            )
-            personWhoOwesRecord.let {
-                it.balanceWithUser = it.balanceWithUser?.plus(split.owedAmount.toDouble())
-                friendsRepository.save(it)
+            // 2. Update the original debtor's record (INCREASE their balance).
+            friendsRepository.findByFriendIdAndCurrentUserId(split.owedToUserId, split.owedByUserId)?.let { debtorFriendRecord ->
+                debtorFriendRecord.balanceWithUser = (debtorFriendRecord.balanceWithUser ?: BigDecimal.ZERO).add(amount)
+                friendsRepository.save(debtorFriendRecord)
             }
         }
+    }
+
+    fun settleUp(payerId: ObjectId, receiverId: ObjectId, amount: Double) {
+        // FIX: Convert the incoming Double to BigDecimal immediately.
+        val settlementAmount = BigDecimal.valueOf(amount)
+
+        // 1. Update the Payer's Record:
+        // If I pay you, my debt decreases, so my balance with you INCREASES (moves from negative towards zero).
+        val payerFriendRecord = friendsRepository.findByFriendIdAndCurrentUserId(receiverId, payerId)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Friendship record not found for payer.")
+
+        payerFriendRecord.balanceWithUser = (payerFriendRecord.balanceWithUser ?: BigDecimal.ZERO).add(settlementAmount)
+        friendsRepository.save(payerFriendRecord)
+
+        // 2. Update the Receiver's Record:
+        // If I pay you, your credit towards me decreases, so your balance with me DECREASES (moves from positive towards zero).
+        val receiverFriendRecord = friendsRepository.findByFriendIdAndCurrentUserId(payerId, receiverId)
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Friendship record not found for receiver.")
+
+        receiverFriendRecord.balanceWithUser = (receiverFriendRecord.balanceWithUser ?: BigDecimal.ZERO).subtract(settlementAmount)
+        friendsRepository.save(receiverFriendRecord)
     }
 }
 
