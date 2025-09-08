@@ -82,9 +82,12 @@ class AuthService(
 
     fun login(email: String, password: String): LoginResponse {
         val user = userRepository.findUserByEmail(email)
-            ?: throw ResponseStatusException(HttpStatus.valueOf(404), "User not found")
+        // Use a more specific message for the UI
+            ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "No user found with that email address.")
+
         if(!hashEncoder.matches(password, user.hashedPassword)) {
-            throw ResponseStatusException(HttpStatus.valueOf(401), "Passwords do not match")
+            // Use a more specific message
+            throw ResponseStatusException(HttpStatus.UNAUTHORIZED, "Incorrect password. Please try again.")
         }
 
         val newAccessToken = jwtService.generateAccessToken(user.userId.toHexString())

@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import com.example.splitwiseclonebackend.services.UserAlreadyExistsException
 import com.example.splitwiseclonebackend.utils.PhoneNumberNormalizer
+import org.springframework.web.server.ResponseStatusException
 
 @RestController
 @RequestMapping("/auth")
@@ -59,8 +60,27 @@ class AuthController(private val authService: AuthService, private val userRepos
     }
 
     @PostMapping("/login")
-    fun login(@RequestBody authRequest: AuthLoginRequest): AuthService.LoginResponse {
-        return authService.login(email = authRequest.email, password = authRequest.password)
+    fun login(@Valid @RequestBody authRequest: AuthLoginRequest): ResponseEntity<Any> {
+        return try {
+            // The authService will now return the successful login response or throw an exception
+            val loginResponse = authService.login(
+                email = authRequest.email,
+                password = authRequest.password
+            )
+            // On success, return a 200 OK status with the login response in the body
+            ResponseEntity.ok(loginResponse)
+        } catch (e: ResponseStatusException) {
+            // If the service throws a specific error (like User Not Found or Incorrect Password),
+            // catch it and return the corresponding status code and a clear error message.
+            ResponseEntity
+                .status(e.statusCode)
+                .body(mapOf("error" to e.reason))
+        } catch (e: Exception) {
+            // For any other unexpected errors, return a 500 Internal Server Error
+            ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
+                .body(mapOf("error" to "An unexpected server error occurred."))
+        }
     }
 
     @PostMapping("/refresh")

@@ -36,8 +36,7 @@ class GroupController(private val groupsRepository: GroupsRepository, private va
 
     data class GroupUpdateRequest(
         val groupId: String,
-        val groupName: String,
-        val profilePicture: String,
+        val groupName: String
     )
 
     data class AddMembersRequest(
@@ -147,10 +146,6 @@ class GroupController(private val groupsRepository: GroupsRepository, private va
         return ResponseEntity.ok().build()
     }
 
-    /**
-     * Deletes an entire group. This can only be done by the group's admin.
-     * This is a DELETE operation, so it takes data from the URL path and query parameters.
-     */
     @DeleteMapping("/delete/{groupId}")
     fun deleteGroup(
         @PathVariable groupId: String,
@@ -179,7 +174,6 @@ class GroupController(private val groupsRepository: GroupsRepository, private va
 
         if (groupToBeUpdated != null) {
             groupUpdateRequest.groupName.let { groupToBeUpdated.groupName = it }
-            groupUpdateRequest.profilePicture.let { groupToBeUpdated.profilePicture = it }
             groupsRepository.save(groupToBeUpdated)
         }
     }
