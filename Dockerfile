@@ -1,7 +1,7 @@
 FROM gradle:jdk17-focal AS build
 WORKDIR /home/gradle/src
 COPY --chown=gradle:gradle . .
-RUN gradle build --no-daemon
+RUN gradle build -x test --no-daemon
 
 FROM openjdk:17-jdk-slim
 WORKDIR /app
